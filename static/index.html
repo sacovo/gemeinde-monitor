@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SVP Vote Monitor & Projection Suite</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Top Navigation / Header -->
+        <header class="app-header">
+            <div class="header-logo">
+                <div class="logo-icon"></div>
+                <div class="logo-text">
+                    <h1>SVP Vote Monitor</h1>
+                    <span class="sub-text">Projection & Comparative Analysis Suite</span>
+                </div>
+            </div>
+            <div class="live-indicator-container">
+                <span class="pulse-dot"></span>
+                <span class="indicator-text">LIVE MODELING ACTIVE</span>
+            </div>
+        </header>
+
+        <!-- Main Dashboard Layout -->
+        <div class="dashboard-grid">
+            
+            <!-- Left Column: Input Form -->
+            <section class="card input-card">
+                <div class="card-header">
+                    <h2>Communal Results Entry</h2>
+                    <p class="card-subtitle">Input voting counts for reporting communes</p>
+                </div>
+                
+                <form id="result-form" class="entry-form" autocomplete="off">
+                    <!-- Commune Autocomplete Input -->
+                    <div class="form-group autocomplete-container">
+                        <label for="commune-search">Commune (Gemeinde)</label>
+                        <div class="input-with-icon">
+                            <svg class="input-icon" viewBox="0 0 24 24">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                            </svg>
+                            <input type="text" id="commune-search" placeholder="Type name or ZIP/BFS ID..." required>
+                        </div>
+                        <input type="hidden" id="selected-geo-id">
+                        <div id="autocomplete-list" class="autocomplete-dropdown hidden"></div>
+                    </div>
+
+                    <!-- Numerical Inputs -->
+                    <div class="inputs-row">
+                        <div class="form-group">
+                            <label for="yes-votes">Yes Votes (Ja)</label>
+                            <input type="number" id="yes-votes" min="0" placeholder="0" required disabled>
+                        </div>
+                        <div class="form-group">
+                            <label for="no-votes">No Votes (Nein)</label>
+                            <input type="number" id="no-votes" min="0" placeholder="0" required disabled>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="eligible-voters">Eligible Voters (Stimmberechtigte)</label>
+                        <input type="number" id="eligible-voters" min="0" placeholder="0" required disabled>
+                        <span class="helper-text">* Populated automatically from baseline, editable.</span>
+                    </div>
+
+                    <div class="button-row">
+                        <button type="button" id="clear-btn" class="btn btn-secondary">Clear</button>
+                        <button type="submit" id="submit-btn" class="btn btn-primary" disabled>Add Result</button>
+                    </div>
+                </form>
+            </section>
+
+            <!-- Right Column: Projections Gauge -->
+            <section class="card projection-card">
+                <div class="projection-header">
+                    <div class="title-section">
+                        <h2>National Projection</h2>
+                        <p class="card-subtitle">Real-time linear regression projection</p>
+                    </div>
+                    
+                    <div class="baseline-selector-container">
+                        <label for="baseline-select">Regression Baseline:</label>
+                        <select id="baseline-select">
+                            <option value="average">Historical Average (All)</option>
+                            <!-- Options populated via JS -->
+                        </select>
+                    </div>
+                </div>
+
+                <div class="projection-content">
+                    <!-- Radial Gauge Widget -->
+                    <div class="gauge-wrapper">
+                        <svg class="radial-gauge" viewBox="0 0 200 200">
+                            <!-- Background track -->
+                            <circle class="gauge-track" cx="100" cy="100" r="85"></circle>
+                            <!-- Progress indicator -->
+                            <circle id="gauge-progress" class="gauge-progress" cx="100" cy="100" r="85" stroke-dasharray="534" stroke-dashoffset="534"></circle>
+                        </svg>
+                        <div class="gauge-text-overlay">
+                            <span id="projection-percentage" class="percentage-val">--%</span>
+                            <span id="projection-outcome" class="outcome-badge">Awaiting Data</span>
+                        </div>
+                    </div>
+
+                    <!-- Statistics Summary Grid -->
+                    <div class="stats-grid">
+                        <div class="stat-box">
+                            <span class="stat-label">Model Fit (R²)</span>
+                            <span id="stat-r2" class="stat-value">--</span>
+                        </div>
+                        <div class="stat-box">
+                            <span class="stat-label">Communes Entered</span>
+                            <span id="stat-count" class="stat-value">0</span>
+                        </div>
+                        <div class="stat-box">
+                            <span class="stat-label">Projected Turnout</span>
+                            <span id="stat-turnout" class="stat-value">--%</span>
+                        </div>
+                        <div class="stat-box">
+                            <span class="stat-label">Projected Total Votes</span>
+                            <span id="stat-votes" class="stat-value">--</span>
+                        </div>
+                    </div>
+
+                    <!-- Regression Details Toggle -->
+                    <details class="regression-details">
+                        <summary>Regression Parameters</summary>
+                        <div class="details-content">
+                            <p><strong>Yes % Model:</strong> y = <span id="param-slope-yes">--</span> * x + <span id="param-intercept-yes">--</span></p>
+                            <p><strong>Turnout Model:</strong> p = <span id="param-slope-part">--</span> * x + <span id="param-intercept-part">--</span></p>
+                        </div>
+                    </details>
+                </div>
+            </section>
+        </div>
+
+        <!-- Bottom Section: Detailed Table -->
+        <section class="card table-card">
+            <div class="table-header">
+                <h2>Entered Communal Results</h2>
+                <div class="table-actions">
+                    <div class="compare-selector-container">
+                        <label for="compare-select">Compare deltas against:</label>
+                        <select id="compare-select">
+                            <option value="average">Historical Average</option>
+                            <!-- Options populated via JS -->
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="table-wrapper">
+                <table id="results-table">
+                    <thead>
+                        <tr>
+                            <th>BFS ID</th>
+                            <th>Commune</th>
+                            <th>Canton</th>
+                            <th>Eligible Voters</th>
+                            <th>Yes / No</th>
+                            <th>Yes %</th>
+                            <th>Turnout %</th>
+                            <th>Delta vs Baseline</th>
+                            <th class="actions-col">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="results-tbody">
+                        <tr>
+                            <td colspan="9" class="empty-table-message">
+                                <svg class="empty-icon" viewBox="0 0 24 24">
+                                    <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                                </svg>
+                                <p>No communal results entered yet. Start entering results above.</p>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+services:
+  monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gemeinden-monitor
+    restart: unless-stopped
+    volumes:
+      # Named volumes to persist state and diff records across container restarts
+      - monitor_changes:/app/monitor_changes
+      - monitor_cache:/app/monitor_cache
+    # Pass the webhook URL as a CLI argument.
+    # Can be overridden via environment variable (e.g. WEBHOOK_URL=https://myurl.com docker-compose up)
+    command: ["--webhook", "${WEBHOOK_URL:-http://127.0.0.1:8000/webhook}"]
+
+volumes:
+  monitor_changes:
+    driver: local
+  monitor_cache:
+    driver: local
