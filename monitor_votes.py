@@ -1,4 +1,5 @@
 import asyncio
+import heapq
 import re
 import hashlib
 import json
@@ -300,37 +301,34 @@ async def check_url(url, html_content, cache_dir, changes_dir, config, url_to_gd
     await send_webhook(config["webhook_url"], payload)
     return True
 
-async def run_iteration(urls, url_to_gdes, cache_dir, changes_dir, config, client, semaphore):
-    log(f"Starting crawl of {len(urls)} URLs...")
-    start_time = time.time()
-    
-    # Fetch all pages
-    tasks = [fetch_url(client, url, semaphore, config["request_timeout"]) for url in urls]
-    results = await asyncio.gather(*tasks)
-    
-    success_count = 0
-    fail_count = 0
-    change_count = 0
-    
-    for url, html_content, error in results:
+async def check_worker(url, semaphore, client, config, url_to_gdes, cache_dir, changes_dir, stats):
+    try:
+        url, html_content, error = await fetch_url(client, url, semaphore, config["request_timeout"])
         if error:
-            # We don't want to alert on simple fetch errors (like transient network failures)
-            # unless it persists, but we will print a debug log.
-            # Avoid logging full socket exceptions to keep logs clean
             log(f"Fetch failed for {url}: {error}", "DEBUG")
-            fail_count += 1
-            continue
+            stats["fail"] += 1
+            return
             
-        success_count += 1
+        stats["success"] += 1
+        changed = await check_url(url, html_content, cache_dir, changes_dir, config, url_to_gdes)
+        if changed:
+            stats["change"] += 1
+    except Exception as e:
+        log(f"Error checking content for {url}: {e}", "ERROR")
+        stats["error"] += 1
+
+async def stats_logger(stats, queue):
+    while True:
         try:
-            changed = await check_url(url, html_content, cache_dir, changes_dir, config, url_to_gdes)
-            if changed:
-                change_count += 1
-        except Exception as e:
-            log(f"Error checking content for {url}: {e}", "ERROR")
-            
-    elapsed = time.time() - start_time
-    log(f"Iteration finished in {elapsed:.2f}s. Success: {success_count}, Failed: {fail_count}, Changes Detected: {change_count}")
+            await asyncio.sleep(60)
+            log(f"Queue status: {len(queue)} items. Stats (past 60s): {stats['success']} success, {stats['fail']} failed, {stats['change']} changes detected, {stats['error']} errors.")
+            # Reset stats counters for the next minute interval
+            stats["success"] = 0
+            stats["fail"] = 0
+            stats["change"] = 0
+            stats["error"] = 0
+        except asyncio.CancelledError:
+            break
 
 def main():
     parser = argparse.ArgumentParser(description="Monitor Swiss Gemeinde voting results pages for changes.")
@@ -406,21 +404,88 @@ def main():
     async def loop():
         # Keep client persistent if possible or recreate it to avoid resource leaks
         async with httpx.AsyncClient(headers=headers, verify=False, follow_redirects=True) as client:
-            while True:
+            # Load initial config
+            config = load_config(args.config)
+            if args.webhook:
+                config["webhook_url"] = args.webhook
+            
+            interval = config.get("check_interval_seconds", 180)
+            
+            # Initialize stats
+            stats = {"success": 0, "fail": 0, "change": 0, "error": 0}
+            
+            # Setup priority queue (heap)
+            # Stagger initial checks over the interval if not running once
+            now = time.time()
+            queue = []
+            for i, url in enumerate(unique_urls):
+                if args.once:
+                    ttl = now
+                else:
+                    stagger = (i * (interval / len(unique_urls))) if len(unique_urls) > 0 else 0
+                    ttl = now + stagger
+                heapq.heappush(queue, (ttl, url))
+                
+            log(f"Initialized queue with {len(queue)} URLs. Check interval: {interval}s.")
+            if not args.once and len(unique_urls) > 0:
+                log(f"Staggering initial checks over {interval}s (approx. every {interval/len(unique_urls):.3f}s)")
+                
+            # Create semaphore
+            semaphore = asyncio.Semaphore(config["concurrency_limit"])
+            
+            # Active task set
+            active_tasks = set()
+            
+            # Start stats logger in background
+            stats_logger_task = None
+            if not args.once:
+                stats_logger_task = asyncio.create_task(stats_logger(stats, queue))
+                
+            while queue:
                 # Reload config dynamically
                 config = load_config(args.config)
                 if args.webhook:
                     config["webhook_url"] = args.webhook
                 
-                semaphore = asyncio.Semaphore(config["concurrency_limit"])
-                await run_iteration(unique_urls, url_to_gdes, cache_dir, changes_dir, config, client, semaphore)
+                # Check the first item in heap
+                ttl, url = queue[0]
+                now = time.time()
                 
-                if args.once:
-                    break
+                if now < ttl:
+                    # Not due yet, sleep until due
+                    sleep_time = ttl - now
+                    await asyncio.sleep(min(sleep_time, 1.0))
+                    continue
+                
+                # Due! Pop it
+                heapq.heappop(queue)
+                
+                # Launch the check
+                task = asyncio.create_task(
+                    check_worker(url, semaphore, client, config, url_to_gdes, cache_dir, changes_dir, stats)
+                )
+                active_tasks.add(task)
+                task.add_done_callback(active_tasks.discard)
+                
+                # Re-enqueue if not running once
+                if not args.once:
+                    next_interval = config.get("check_interval_seconds", 180)
+                    next_ttl = time.time() + next_interval
+                    heapq.heappush(queue, (next_ttl, url))
                     
-                interval = config["check_interval_seconds"]
-                log(f"Sleeping for {interval} seconds...")
-                await asyncio.sleep(interval)
+            # Queue is empty (only possible if args.once is True)
+            if args.once:
+                if active_tasks:
+                    log(f"Waiting for {len(active_tasks)} active checks to complete...")
+                    await asyncio.gather(*active_tasks, return_exceptions=True)
+                log(f"Once-off check finished. Success: {stats['success']}, Failed: {stats['fail']}, Changes: {stats['change']}")
+                
+            if stats_logger_task:
+                stats_logger_task.cancel()
+                try:
+                    await stats_logger_task
+                except asyncio.CancelledError:
+                    pass
                 
     try:
         asyncio.run(loop())

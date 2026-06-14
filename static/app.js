@@ -175,7 +175,7 @@ function renderProjection() {
             partEqHtml += `<em>Awaiting results (need ≥2 communes) to compute weights...</em>`;
         }
         
-        detailsContent.innerHTML = `<p>${yesEqHtml}</p><p style="margin-top:0.75rem; border-top:1px dashed rgba(255,255,255,0.1); padding-top:0.75rem;">${partEqHtml}</p>`;
+        detailsContent.innerHTML = `<p>${yesEqHtml}</p><p style="margin-top:0.75rem; border-top:1px dashed rgba(0,0,0,0.1); padding-top:0.75rem;">${partEqHtml}</p>`;
     } else {
         // Restore standard 1D linear regression display
         detailsContent.innerHTML = `
